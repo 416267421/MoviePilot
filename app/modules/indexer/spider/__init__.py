@@ -75,6 +75,10 @@ class SiteSpider:
             self.search = indexer.get('search')
             self.batch = indexer.get('batch')
             self.browse = indexer.get('browse')
+            # 2026-08-30 本地补丁：彩虹岛默认页被置顶种占位，browse 改用带参数地址（仅此站）
+            if not self.browse and "ptchdbits.co" in str(indexer.get("domain") or ""):
+                self.browse = {"path": "torrents.php?inclbookmarked=0&incldead=0&spstate=0&page={page}", "start": 1}
+
             self.category = indexer.get('category')
             self.list = (indexer.get('torrents') or {}).get('list', {})
             self.fields = (indexer.get('torrents') or {}).get('fields') or {}
