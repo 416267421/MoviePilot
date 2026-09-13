@@ -251,7 +251,8 @@ class BrushFlowLowFreq(_PluginBase):
     # 插件图标
     plugin_icon = "brush.jpg"
     # 插件版本
-    plugin_version = "4.3.2"
+    # 4.3.3.1：基于市场4.3.3之上的本地补丁版，版本抬高避免MP启动时被市场版自动重装覆盖（本地版）
+    plugin_version = "4.3.3.1"
     # 插件作者
     plugin_author = "jxxghp,InfinityPacer"
     # 作者主页
