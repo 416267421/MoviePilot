@@ -32,6 +32,12 @@ from app.utils.string import StringUtils
 
 lock = threading.Lock()
 
+# 2026-09-13 本地版：qb 未完成状态全表（含排队/暂停/校验），对齐 hermes-ptchd-brush/watch 脚本口径
+HERMES_UNFINISHED_DL_STATES = ("error", "missingFiles", "allocating", "downloading",
+                               "metaDL", "pausedDL", "queuedDL", "forcedDL",
+                               "forcedMetaDL", "stalledDL", "checkingDL", "stoppedDL",
+                               "checkingResumeData", "moving")
+
 
 class BrushConfig:
     """
@@ -77,6 +83,23 @@ class BrushConfig:
         self.qb_category = config.get("qb_category")
         self.site_hr_active = config.get("site_hr_active", False)
         self.site_skip_tips = config.get("site_skip_tips", False)
+
+        # Hermes 本地规则包（2026-09-13 本地版：对齐 hermes-ptchd-brush/watch 双脚本闸门与删种规则，
+        # 全局级配置（不进站点独立配置），默认关闭；数值留空可单独停用对应规则）
+        self.hermes_rules = config.get("hermes_rules", False)
+        self.hermes_max_unfinished = self.__parse_number(config.get("hermes_max_unfinished", 5))
+        self.hermes_speed_control_url = config.get("hermes_speed_control_url") or None
+        self.hermes_min_age_min = self.__parse_number(config.get("hermes_min_age_min", 30))
+        self.hermes_noflow_min = self.__parse_number(config.get("hermes_noflow_min", 10))
+        self.hermes_ratio = self.__parse_number(config.get("hermes_ratio", 1.5))
+        self.hermes_ratio_min_min = self.__parse_number(config.get("hermes_ratio_min_min", 40))
+        self.hermes_max_seed_hours = self.__parse_number(config.get("hermes_max_seed_hours", 6))
+        self.hermes_weak_min = self.__parse_number(config.get("hermes_weak_min", 30))
+        self.hermes_weak_up_mb = self.__parse_number(config.get("hermes_weak_up_mb", 50))
+        self.hermes_cold_min = self.__parse_number(config.get("hermes_cold_min", 90))
+        self.hermes_cold_up_mb = self.__parse_number(config.get("hermes_cold_up_mb", 200))
+        self.hermes_stalldl_hours = self.__parse_number(config.get("hermes_stalldl_hours", 1))
+        self.hermes_purge = config.get("hermes_purge", True)
 
         self.brush_tag = "刷流"
         # 站点独立配置
@@ -251,8 +274,8 @@ class BrushFlowLowFreq(_PluginBase):
     # 插件图标
     plugin_icon = "brush.jpg"
     # 插件版本
-    # 4.3.3.1：基于市场4.3.3之上的本地补丁版，版本抬高避免MP启动时被市场版自动重装覆盖（本地版）
-    plugin_version = "4.3.3.1"
+    # 4.3.3.2：hermes 规则包（闸门+删种对齐 hermes-ptchd-brush/watch 双脚本），版本抬高于市场 4.3.3 避免被自动重装覆盖（本地版）
+    plugin_version = "4.3.3.2"
     # 插件作者
     plugin_author = "jxxghp,InfinityPacer"
     # 作者主页
@@ -1748,6 +1771,268 @@ class BrushFlowLowFreq(_PluginBase):
                         ]
                     },
                     {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'hermes_rules',
+                                            'label': 'Hermes规则包(本地闸门/删种)',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'hermes_purge',
+                                            'label': '红线超容腾位删(Hermes)',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'hermes_speed_control_url',
+                                            'label': 'speed-control状态URL(闸门4，空=关)',
+                                            'placeholder': '如：http://192.168.8.233:18888/status'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'hermes_max_unfinished',
+                                            'label': '未完成任务数上限(闸门1)',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'hermes_ratio',
+                                            'label': '删种分享率(且超时)',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'hermes_ratio_min_min',
+                                            'label': '分享率删种最短做种(分钟)',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'hermes_max_seed_hours',
+                                            'label': '过气删种(小时)',
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'hermes_noflow_min',
+                                            'label': '零上传删种(分钟)',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'hermes_weak_min',
+                                            'label': '涨太慢删种(分钟)',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'hermes_weak_up_mb',
+                                            'label': '涨太慢上传阈值(MB)',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'hermes_cold_min',
+                                            'label': '没人要删种(分钟)',
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VRow',
+                        'content': [
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'hermes_cold_up_mb',
+                                            'label': '没人要上传阈值(MB)',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'hermes_stalldl_hours',
+                                            'label': '死种判定(小时,进度0%)',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VTextField',
+                                        'props': {
+                                            'model': 'hermes_min_age_min',
+                                            'label': '新推送豁免(分钟)',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 3
+                                },
+                                'content': [
+                                    {
+                                        'component': 'VAlert',
+                                        'props': {
+                                            'type': 'info',
+                                            'variant': 'tonal',
+                                            'text': 'Hermes规则包需配合：总上传/下载闸门设 maxupspeed/maxdlspeed(KB/s，聚合全部下载器)、容量闸门设 disksize(GB)'
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
                         "component": "VDialog",
                         "props": {
                             "model": "dialog_closed",
@@ -1853,7 +2138,21 @@ class BrushFlowLowFreq(_PluginBase):
             "freeleech": "free",
             "hr": "yes",
             "enable_site_config": False,
-            "site_config": BrushConfig.get_demo_site_config()
+            "site_config": BrushConfig.get_demo_site_config(),
+            "hermes_rules": False,
+            "hermes_purge": True,
+            "hermes_max_unfinished": 5,
+            "hermes_speed_control_url": "",
+            "hermes_min_age_min": 30,
+            "hermes_noflow_min": 10,
+            "hermes_ratio": 1.5,
+            "hermes_ratio_min_min": 40,
+            "hermes_max_seed_hours": 6,
+            "hermes_weak_min": 30,
+            "hermes_weak_up_mb": 50,
+            "hermes_cold_min": 90,
+            "hermes_cold_up_mb": 200,
+            "hermes_stalldl_hours": 1
         }
 
     def get_page(self) -> List[dict]:
@@ -2085,6 +2384,16 @@ class BrushFlowLowFreq(_PluginBase):
             if not pre_condition_passed:
                 logger.info(f"刷流任务执行完成")
                 return
+
+            # Hermes 本地闸门（2026-09-13 本地版）：闸门1任务数全表计数(含排队不筛标签) + 闸门4 speed-control限流
+            # 闸门2/3 三家总上传/下载由原生 maxupspeed/maxdlspeed 承担（downloader_info 聚合 MP 配置的所有下载器），
+            # 闸门5 容量由原生 disksize 承担
+            if brush_config.hermes_rules:
+                hermes_gate_passed, reason = self.__hermes_evaluate_gates()
+                self.__log_brush_conditions(passed=hermes_gate_passed, reason=reason)
+                if not hermes_gate_passed:
+                    logger.info(f"刷流任务执行完成")
+                    return
 
             statistic_info = self.__get_statistic_info()
 
@@ -2412,6 +2721,191 @@ class BrushFlowLowFreq(_PluginBase):
 
     # endregion
 
+    # region Hermes 本地规则（2026-09-13 本地版：闸门与删种对齐 hermes-ptchd-brush/watch 双脚本）
+
+    def __hermes_evaluate_gates(self) -> Tuple[bool, Optional[str]]:
+        """
+        Hermes 本地拉种闸门：
+        闸门1 任务数——下载器全表未完成(含排队)任务数（不筛刷流标签，MP/脚本推的都算）；
+        闸门4 speed-control 限流——配置的 status URL 返回 mode 非 normal（有人看片让路）即拦，查询失败不拦。
+        闸门2/3（三家总上传/下载）走原生 maxupspeed/maxdlspeed，闸门5（容量）走原生 disksize，不在此重复。
+        """
+        brush_config = self.__get_brush_config()
+
+        # 闸门1 任务数
+        if brush_config.hermes_max_unfinished:
+            try:
+                torrents, error = self.downloader.get_torrents()
+                if not error:
+                    unfinished = sum(1 for t in (torrents or []) if self.__hermes_is_unfinished(t))
+                    if unfinished >= int(brush_config.hermes_max_unfinished):
+                        return False, (f"闸门1-任务数：未完成(含排队) {unfinished} 个 "
+                                       f"≥ {brush_config.hermes_max_unfinished}，本轮不加种")
+                    logger.info(f"闸门1-任务数：未完成(含排队) {unfinished} 个 "
+                                f"< {brush_config.hermes_max_unfinished}，放行")
+            except Exception as e:
+                logger.warning(f"闸门1-任务数：下载器任务列表查询失败(计0不拦截)：{e}")
+
+        # 闸门4 speed-control 限流
+        if brush_config.hermes_speed_control_url:
+            try:
+                resp = RequestUtils().get_res(url=brush_config.hermes_speed_control_url)
+                if resp and resp.ok:
+                    mode = (resp.json() or {}).get("mode", "")
+                    if mode and mode != "normal":
+                        return False, f"闸门4-限流：speed-control 限速中（mode={mode}，有人看片），本轮不加种"
+                    logger.info(f"闸门4-限流：mode={mode} 正常，放行")
+            except Exception as e:
+                logger.warning(f"闸门4-限流：speed-control 查询失败(不拦截)：{e}")
+
+        return True, None
+
+    def __hermes_is_unfinished(self, torrent: Any) -> bool:
+        """
+        判断种子是否处于未完成状态（qb 用全状态表含排队；TR 状态未知时按未完成处理，豁免删种宁漏勿删）
+        """
+        try:
+            if self.downloader_helper.is_downloader("qbittorrent", service=self.service_info):
+                return torrent.get("state") in HERMES_UNFINISHED_DL_STATES
+            status = getattr(torrent, "status", None)
+            if status is None:
+                return True
+            return bool(getattr(status, "is_downloading", False) or getattr(status, "is_checking", False)
+                        or getattr(status, "is_queued", False)
+                        or (getattr(status, "is_stopped", False)
+                            and not getattr(status, "is_finished", False)))
+        except Exception as e:
+            logger.warning(f"Hermes规则：判断种子状态异常(按未完成豁免处理)：{e}")
+            return True
+
+    def __hermes_get_progress(self, torrent: Any) -> float:
+        """
+        归一化进度（qb 0-1，TR 0-100 → 0-1）
+        """
+        try:
+            if self.downloader_helper.is_downloader("qbittorrent", service=self.service_info):
+                return float(torrent.get("progress") or 0)
+            return float(getattr(torrent, "progress", 0) or 0) / 100
+        except Exception:
+            return 1.0
+
+    @staticmethod
+    def __hermes_num(value, default=None):
+        try:
+            return float(value) if value not in (None, "") else default
+        except (TypeError, ValueError):
+            return default
+
+    def __hermes_delete_torrents(self, torrents: List[Any], torrent_tasks: Dict[str, dict]) -> List:
+        """
+        Hermes 本地删种规则（对齐 hermes-ptchd-watch.py，只处理插件管理的任务）：
+        下载中死种(超时进度0%)删 / 完成后零上传10min删 / 赚够ratio且40min删 / 过气6h删 /
+        涨太慢30min<50MB删 / 没人要90min<200M删 / 总量超 disksize 红线按 uploaded/size 最差腾位删。
+        豁免：未完成(全状态含排队)不走常规删种；推送<30min豁免。
+        """
+        brush_config = self.__get_brush_config()
+        now = time.time()
+        victims = {}
+
+        def _kill(torrent_hash: str, torrent_info: dict, torrent_task: dict, why: str):
+            if torrent_hash in victims:
+                return
+            victims[torrent_hash] = why
+            logger.info(f"Hermes规则判删({why})：{torrent_info.get('title', '')[:45]} "
+                        f"{self.__bytes_to_gb(torrent_info.get('total_size') or 0):.1f}G "
+                        f"已传{self.__bytes_to_gb(torrent_info.get('uploaded') or 0):.2f}G "
+                        f"分享率{torrent_info.get('ratio') or 0:.2f} "
+                        f"完成{(torrent_info.get('seeding_time') or 0) / 3600:.1f}h")
+            self.__send_delete_message(site_name=torrent_task.get("site_name", ""),
+                                       torrent_title=torrent_task.get("title", ""),
+                                       torrent_desc=torrent_task.get("description", ""),
+                                       reason=f"Hermes规则：{why}")
+
+        infos = {}
+        for torrent in torrents:
+            torrent_hash = self.__get_hash(torrent)
+            if torrent_hash:
+                infos[torrent_hash] = (torrent, self.__get_torrent_info(torrent))
+
+        for torrent_hash, (torrent, torrent_info) in infos.items():
+            torrent_task = torrent_tasks.get(torrent_hash)
+            if not torrent_task:
+                continue  # 非插件管理的种子不碰
+            age = now - (torrent_info.get("add_on") or now)
+            seeding_time = torrent_info.get("seeding_time") or 0
+            uploaded = torrent_info.get("uploaded") or 0
+
+            if self.__hermes_is_unfinished(torrent):
+                # 下载中死种：超时且进度仍 0% 直接删
+                stalldl_hours = self.__hermes_num(brush_config.hermes_stalldl_hours)
+                if stalldl_hours and self.__hermes_get_progress(torrent) == 0 \
+                        and age >= stalldl_hours * 3600:
+                    _kill(torrent_hash, torrent_info, torrent_task, f"死种 {stalldl_hours:g}h进度0%")
+                continue  # 未完成(含排队)豁免常规删种
+
+            min_age_min = self.__hermes_num(brush_config.hermes_min_age_min, 30)
+            if age < min_age_min * 60:
+                continue  # 新推送豁免
+
+            # 完成后零上传：上传量 10min 零增长删（基线存任务记录，check 周期间对比）
+            noflow_min = self.__hermes_num(brush_config.hermes_noflow_min)
+            if seeding_time > 0 and noflow_min:
+                baseline = torrent_task.get("hermes_noflow")
+                if baseline and baseline.get("uploaded") == uploaded:
+                    if now - baseline.get("ts", now) >= noflow_min * 60:
+                        _kill(torrent_hash, torrent_info, torrent_task, f"{noflow_min:g}min零上传")
+                        torrent_task.pop("hermes_noflow", None)
+                else:
+                    torrent_task["hermes_noflow"] = {"uploaded": uploaded, "ts": now}
+
+            if torrent_hash in victims:
+                continue
+
+            ratio_cfg = self.__hermes_num(brush_config.hermes_ratio)
+            ratio_min_min = self.__hermes_num(brush_config.hermes_ratio_min_min)
+            if ratio_cfg and ratio_min_min and (torrent_info.get("ratio") or 0) >= ratio_cfg \
+                    and seeding_time >= ratio_min_min * 60:
+                _kill(torrent_hash, torrent_info, torrent_task, f"赚够 ratio>={ratio_cfg:g}且{ratio_min_min:g}min")
+                continue
+            max_seed_hours = self.__hermes_num(brush_config.hermes_max_seed_hours)
+            if max_seed_hours and seeding_time >= max_seed_hours * 3600:
+                _kill(torrent_hash, torrent_info, torrent_task, f"过气 >={max_seed_hours:g}h")
+                continue
+            weak_min = self.__hermes_num(brush_config.hermes_weak_min)
+            weak_up_mb = self.__hermes_num(brush_config.hermes_weak_up_mb)
+            if weak_min and weak_up_mb and seeding_time >= weak_min * 60 \
+                    and uploaded < weak_up_mb * 1024 ** 2:
+                _kill(torrent_hash, torrent_info, torrent_task, f"涨太慢 {weak_min:g}min<{weak_up_mb:g}MB")
+                continue
+            cold_min = self.__hermes_num(brush_config.hermes_cold_min)
+            cold_up_mb = self.__hermes_num(brush_config.hermes_cold_up_mb)
+            if cold_min and cold_up_mb and seeding_time >= cold_min * 60 \
+                    and uploaded < cold_up_mb * 1024 ** 2:
+                _kill(torrent_hash, torrent_info, torrent_task, f"没人要 {cold_min:g}min<{cold_up_mb:g}MB")
+                continue
+
+        # 红线腾位：全下载器总量超 disksize 时，按 uploaded/size 最差删插件管理的非下载中任务
+        if brush_config.hermes_purge and brush_config.disksize:
+            cap_bytes = float(brush_config.disksize) * 1024 ** 3
+            kept = sum((info.get("total_size") or 0) for h, (_, info) in infos.items()
+                       if h not in victims)
+            if kept > cap_bytes:
+                pool = sorted(
+                    [(h, t, info) for h, (t, info) in infos.items()
+                     if h not in victims and h in torrent_tasks
+                     and not self.__hermes_is_unfinished(t)],
+                    key=lambda x: (x[2].get("uploaded") or 0) / max(x[2].get("total_size") or 1, 1))
+                for torrent_hash, torrent, torrent_info in pool:
+                    if kept <= cap_bytes:
+                        break
+                    _kill(torrent_hash, torrent_info, torrent_tasks[torrent_hash], "红线腾位")
+                    kept -= torrent_info.get("total_size") or 0
+                logger.info(f"Hermes规则红线处置后总量预计 {self.__bytes_to_gb(kept):.1f}G")
+
+        return list(victims.keys())
+
+    # endregion
+
     # region Check
 
     def check(self):
@@ -2487,7 +2981,12 @@ class BrushFlowLowFreq(_PluginBase):
                 need_delete_hashes = []
 
                 # 如果配置了动态删除以及删种阈值，则根据动态删种进行分组处理
-                if brush_config.proxy_delete and brush_config.delete_size_range:
+                if brush_config.hermes_rules:
+                    logger.info("已开启Hermes规则包，按本地删种规则检查任务")
+                    hermes_delete_hashes = self.__hermes_delete_torrents(torrents=seeding_torrents,
+                                                                         torrent_tasks=torrent_tasks) or []
+                    need_delete_hashes.extend(hermes_delete_hashes)
+                elif brush_config.proxy_delete and brush_config.delete_size_range:
                     logger.info("已开启动态删种，按系统默认动态删种条件开始检查任务")
                     proxy_delete_hashes = self.__delete_torrent_for_proxy(torrents=check_torrents,
                                                                           torrent_tasks=torrent_tasks) or []
@@ -3133,6 +3632,20 @@ class BrushFlowLowFreq(_PluginBase):
             "qb_category": brush_config.qb_category,
             "enable_site_config": brush_config.enable_site_config,
             "site_config": brush_config.site_config,
+            "hermes_rules": brush_config.hermes_rules,
+            "hermes_max_unfinished": brush_config.hermes_max_unfinished,
+            "hermes_speed_control_url": brush_config.hermes_speed_control_url,
+            "hermes_min_age_min": brush_config.hermes_min_age_min,
+            "hermes_noflow_min": brush_config.hermes_noflow_min,
+            "hermes_ratio": brush_config.hermes_ratio,
+            "hermes_ratio_min_min": brush_config.hermes_ratio_min_min,
+            "hermes_max_seed_hours": brush_config.hermes_max_seed_hours,
+            "hermes_weak_min": brush_config.hermes_weak_min,
+            "hermes_weak_up_mb": brush_config.hermes_weak_up_mb,
+            "hermes_cold_min": brush_config.hermes_cold_min,
+            "hermes_cold_up_mb": brush_config.hermes_cold_up_mb,
+            "hermes_stalldl_hours": brush_config.hermes_stalldl_hours,
+            "hermes_purge": brush_config.hermes_purge,
             "_tabs": self._tabs
         }
 
