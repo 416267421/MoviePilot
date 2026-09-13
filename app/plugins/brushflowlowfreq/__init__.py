@@ -3676,6 +3676,7 @@ class BrushFlowLowFreq(_PluginBase):
             "hermes_cold_up_mb": brush_config.hermes_cold_up_mb,
             "hermes_stalldl_hours": brush_config.hermes_stalldl_hours,
             "hermes_purge": brush_config.hermes_purge,
+            "hermes_deep_page": brush_config.hermes_deep_page,
             "_tabs": self._tabs
         }
 
