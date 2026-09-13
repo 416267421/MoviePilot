@@ -100,6 +100,8 @@ class BrushConfig:
         self.hermes_cold_up_mb = self.__parse_number(config.get("hermes_cold_up_mb", 200))
         self.hermes_stalldl_hours = self.__parse_number(config.get("hermes_stalldl_hours", 1))
         self.hermes_purge = config.get("hermes_purge", True)
+        # 彩虹岛深页翻页（2026-09-13 本地版）：免费新种被置顶堆压在第3页，追加一页合并（默认开）
+        self.hermes_deep_page = config.get("hermes_deep_page", True)
 
         self.brush_tag = "刷流"
         # 站点独立配置
@@ -274,8 +276,9 @@ class BrushFlowLowFreq(_PluginBase):
     # 插件图标
     plugin_icon = "brush.jpg"
     # 插件版本
+    # 4.3.3.3：彩虹岛深页翻页（hermes_deep_page，默认开）——免费新种被置顶堆压在第3页，追加 browse(page=1) 合并两页
     # 4.3.3.2：hermes 规则包（闸门+删种对齐 hermes-ptchd-brush/watch 双脚本），版本抬高于市场 4.3.3 避免被自动重装覆盖（本地版）
-    plugin_version = "4.3.3.2"
+    plugin_version = "4.3.3.3"
     # 插件作者
     plugin_author = "jxxghp,InfinityPacer"
     # 作者主页
@@ -1813,6 +1816,22 @@ class BrushFlowLowFreq(_PluginBase):
                                 },
                                 'content': [
                                     {
+                                        'component': 'VSwitch',
+                                        'props': {
+                                            'model': 'hermes_deep_page',
+                                            'label': '彩虹岛深页翻页',
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                'component': 'VCol',
+                                'props': {
+                                    'cols': 12,
+                                    'md': 4
+                                },
+                                'content': [
+                                    {
                                         'component': 'VTextField',
                                         'props': {
                                             'model': 'hermes_speed_control_url',
@@ -2141,6 +2160,7 @@ class BrushFlowLowFreq(_PluginBase):
             "site_config": BrushConfig.get_demo_site_config(),
             "hermes_rules": False,
             "hermes_purge": True,
+            "hermes_deep_page": True,
             "hermes_max_unfinished": 5,
             "hermes_speed_control_url": "",
             "hermes_min_age_min": 30,
@@ -2442,11 +2462,21 @@ class BrushFlowLowFreq(_PluginBase):
 
         logger.info(f"开始获取站点 {siteinfo.name} 的新种子 ...")
         torrents = self.torrents_chain.browse(domain=siteinfo.domain)
+
+        brush_config = self.__get_brush_config(sitename=siteinfo.name)
+
+        # 彩虹岛深页翻页（2026-09-13 本地版）：spider 补丁 start=1 使 browse 默认只拉第2页(URL page=1)，
+        # 免费新种被置顶堆压在第3页(URL page=2)，这里追加 browse(page=1) 合并两页
+        if brush_config.hermes_deep_page and siteinfo.domain == "ptchdbits.co":
+            deep_torrents = self.torrents_chain.browse(domain=siteinfo.domain, page=1)
+            logger.info(f"站点 {siteinfo.name} 深页翻页获取完成，追加 {len(deep_torrents)} 条")
+            if deep_torrents:
+                exist_keys = {t.page_url or t.title for t in torrents}
+                torrents.extend(t for t in deep_torrents if (t.page_url or t.title) not in exist_keys)
+
         if not torrents:
             logger.info(f"站点 {siteinfo.name} 没有获取到种子")
             return True
-
-        brush_config = self.__get_brush_config(sitename=siteinfo.name)
 
         if brush_config.site_hr_active:
             logger.info(f"站点 {siteinfo.name} 已开启全站H&R选项，所有种子设置为H&R种子")
